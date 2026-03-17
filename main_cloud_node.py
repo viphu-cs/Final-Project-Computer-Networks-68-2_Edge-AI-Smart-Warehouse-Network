@@ -1,82 +1,74 @@
 """
-main_edge_node.py
-=================
-ไฟล์หลักสำหรับรันระบบ Smart Warehouse Edge AI (จำลอง OSI 7 Layers + DAFT)
-ทำหน้าที่เป็นศูนย์กลางเชื่อมต่อทุก Layer ฝั่งอุปกรณ์ที่หน้างาน (Edge Node)
+main_cloud_node.py
+==================
+ไฟล์หลักสำหรับรันระบบ Cloud Server (ส่วนกลาง)
+ทำหน้าที่เปิดช่องทางการสื่อสาร (UDP Socket) รอรับแพ็กเก็ตข้อมูลจาก Edge Node
+พร้อมทำการถอดรหัสและแสดงผลขึ้น Cloud Dashboard
 """
 
-import time
-import random
+import socket
+import json
+import base64
+from datetime import datetime
 
-# Import เลเยอร์ทั้งหมดที่เราสร้างไว้
-from layer7_application.edge_ai_logic import process_sensor_daft
-from layer6_presentation.data_formatter import PresentationLayer
-from layer5_session.session_manager import SessionLayer
-from layer4_transport.dtn_buffer import DTNBuffer
-from layer3_network.ip_router import IPRouter
-from layer1_2_physical_link.link_simulator import LinkSimulator
-
-def run_edge_node():
-    # 1. สร้าง Instance ของแต่ละเลเยอร์เตรียมไว้
-    presentation = PresentationLayer()
-    session = SessionLayer()
-    dtn_buffer = DTNBuffer()
-    router = IPRouter()
+def run_cloud_node():
+    # 1. ตั้งค่า IP และ Port สำหรับรับข้อมูล (ต้องตรงกับปลายทางใน ip_router.py)
+    UDP_IP = "127.0.0.1"  # รันในเครื่องตัวเอง (Localhost)
+    UDP_PORT = 9999       # พอร์ต 9999
     
-    # ตั้งค่าให้โอกาสเน็ตหลุดอยู่ที่ 30% เพื่อโชว์ความทนทานของระบบ
-    link = LinkSimulator(failure_rate=0.30)
-
-    print("=========================================================")
-    print("🚀 เริ่มการจำลอง: Smart Warehouse Edge AI (OSI 7 Layers + DAFT)")
-    print("=========================================================\n")
+    # 2. สร้าง Socket เพื่อเปิดช่องทางการสื่อสาร (Network Layer ฝั่งรับ)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind((UDP_IP, UDP_PORT))
+    
+    print("================================================================")
+    print(f"☁️ Cloud Server Node พร้อมทำงาน! (Listening on {UDP_IP}:{UDP_PORT})")
+    print("================================================================\n")
+    print("รอรับข้อมูลจาก Smart Warehouse Edge Node...")
 
     try:
         while True:
-            print("=" * 60)
+            # 3. รอรับแพ็กเก็ตข้อมูลจากเครือข่าย (รับได้สูงสุด 4096 bytes ต่อรอบ)
+            data, addr = sock.recvfrom(4096)
+            receive_time = datetime.now().strftime("%H:%M:%S")
             
-            # จำลองอุณหภูมิหน้างาน (องศาเซลเซียส) ให้แกว่งอยู่ในช่วง 20 ถึง 38 องศา
-            current_temp = round(random.uniform(20.0, 38.0), 1)
+            # 4. แปลงข้อมูลที่รับมา (Bytes) กลับเป็น String
+            packet_str = data.decode('utf-8')
             
-            # --- Layer 7: Application (ประมวลผลเซนเซอร์ และตัดสินใจด้วย DAFT) ---
-            raw_payload = process_sensor_daft(current_temp)
-            
-            # --- Layer 6: Presentation (แปลงเป็น JSON และเข้ารหัส Base64) ---
-            encoded_payload = presentation.encode_payload(raw_payload)
-            
-            # --- Layer 1/2: Physical & Data Link (เช็คสถานะสายแลน/Wi-Fi ก่อนส่ง) ---
-            if link.check_connection():
+            try:
+                # 5. แกะซองจดหมาย IP Packet (Network Layer)
+                packet = json.loads(packet_str)
+                src_ip = packet.get("src_ip", "Unknown")
+                session_id = packet.get("session_id", "No-Session")
+                encoded_payload = packet.get("data", "")
                 
-                # --- Layer 5: Session (เปิดการเชื่อมต่อ) ---
-                session_id = session.establish_session()
+                # 6. ถอดรหัสข้อมูล Base64 (Presentation Layer ฝั่งรับ)
+                decoded_bytes = base64.b64decode(encoded_payload.encode('utf-8'))
+                payload = json.loads(decoded_bytes.decode('utf-8'))
                 
-                # --- Layer 4: Transport (กวาดข้อมูลที่ค้างอยู่ใน Database ขึ้นมาส่งก่อน) ---
-                buffered_data_list = dtn_buffer.forward_data()
-                if buffered_data_list:
-                    for idx, b_data in enumerate(buffered_data_list):
-                        print(f"[Orchestrator] 🔄 กำลังส่งข้อมูลค้างส่ง (DTN Recovery) {idx+1}/{len(buffered_data_list)}...")
-                        router.attach_header_and_send(b_data, session_id)
+                # 7. แสดงผลข้อมูลลงบน Dashboard
+                print("-" * 65)
+                print(f"📥 [Cloud Dashboard] ได้รับข้อมูลเวลา: {receive_time}")
+                print(f"   🌐 ต้นทาง: {src_ip} | 🔑 Session: {session_id}")
                 
-                # --- Layer 3: Network (แนบ IP และส่งข้อมูลปัจจุบันขึ้น Cloud) ---
-                router.attach_header_and_send(encoded_payload, session_id)
+                # ดึงค่ามาแสดงผล (เปลี่ยนสี/ไอคอนตามสถานะ)
+                temp = payload.get("temp")
+                state = payload.get("daft_state")
+                action = payload.get("action")
+                o4 = payload.get("O4_asymmetry")
                 
-            else:
-                # กรณีเน็ตหลุด!
+                status_icon = "✅" if state == "PURE" else ("🚨" if state == "DESTRUCTIVE" else ("❄️" if state == "CONSTRUCTIVE" else "⚠️"))
                 
-                # --- Layer 5: Session (ทำลายการเชื่อมต่อทิ้ง) ---
-                session.terminate_session()
+                print(f"   📊 สถานะโกดัง: {status_icon} {temp}°C | DAFT State: {state:<12} | O4: {o4}")
+                print(f"   ⚙️ การสั่งการหน้างาน: {action}")
+                print("-" * 65)
                 
-                # --- Layer 4: Transport (Offline Resilience - ฝากข้อมูลลง Local Database) ---
-                dtn_buffer.store_data(encoded_payload)
-                print("[Orchestrator] ⚠️ ระบบออฟไลน์: เครือข่ายล่ม แต่ระบบหน้างาน (Edge AI) ยังคุมพัดลมได้ และบันทึกข้อมูลเรียบร้อย")
+            except Exception as e:
+                print(f"❌ [Error] ไม่สามารถประมวลผลแพ็กเก็ตจาก {addr} ได้: {e}")
 
-            # หน่วงเวลา 5 วินาทีก่อนเริ่มรอบใหม่ (ให้ดูง่ายตอนพรีเซนต์)
-            time.sleep(5) 
-            
     except KeyboardInterrupt:
-        print("\n[System] 🛑 กำลังปิดระบบ Edge Node...")
-        router.close_connection()
-        dtn_buffer.close()
+        print("\n[System] 🛑 กำลังปิดระบบ Cloud Server...")
+        sock.close()
         print("[System] ปิดระบบอย่างปลอดภัย")
 
 if __name__ == "__main__":
-    run_edge_node()
+    run_cloud_node()
