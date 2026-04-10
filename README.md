@@ -1,3 +1,6 @@
+Website:https://viphu-cs.github.io/-Website-Final-Project-Computer-Networks-68-2_Edge-AI-Smart-Warehouse-Network/
+Video:https://youtube.com/shorts/FvXbPps7QYA
+
 # Final-Project-Computer-Networks-68-2_Edge-AI-Smart-Warehouse-Network
 
 ts_warehouse_daft_sim_full/
