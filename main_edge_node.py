@@ -15,6 +15,7 @@ from layer5_session.session_manager import SessionLayer
 from layer4_transport.dtn_buffer import DTNBuffer
 from layer3_network.ip_router import IPRouter
 from layer1_2_physical_link.link_simulator import LinkSimulator
+from layer7_application.performance_evaluator import PerformanceEvaluator
 
 def run_edge_node():
     # 1. สร้าง Instance ของแต่ละเลเยอร์เตรียมไว้
@@ -22,6 +23,7 @@ def run_edge_node():
     session = SessionLayer()
     dtn_buffer = DTNBuffer()
     router = IPRouter()
+    evaluator = PerformanceEvaluator()
     
     # ตั้งค่าให้โอกาสเน็ตหลุดอยู่ที่ 30% เพื่อโชว์ความทนทานของระบบ
     link = LinkSimulator(failure_rate=0.30)
@@ -39,19 +41,23 @@ def run_edge_node():
             
             # --- Layer 7: Application (ประมวลผลเซนเซอร์ และตัดสินใจด้วย DAFT) ---
             raw_payload = process_sensor_daft(current_temp)
+            evaluator.log_daft_state(raw_payload["daft_state"])
             
             # --- Layer 6: Presentation (แปลงเป็น JSON และเข้ารหัส Base64) ---
             encoded_payload = presentation.encode_payload(raw_payload)
             
             # --- Layer 1/2: Physical & Data Link (เช็คสถานะสายแลน/Wi-Fi ก่อนส่ง) ---
-            if link.check_connection():
-                
+            is_connected = link.check_connection()
+            evaluator.log_attempt(is_connected)
+            
+            if is_connected:
                 # --- Layer 5: Session (เปิดการเชื่อมต่อ) ---
                 session_id = session.establish_session()
                 
                 # --- Layer 4: Transport (กวาดข้อมูลที่ค้างอยู่ใน Database ขึ้นมาส่งก่อน) ---
                 buffered_data_list = dtn_buffer.forward_data()
                 if buffered_data_list:
+                    evaluator.log_recovery(len(buffered_data_list))
                     for idx, b_data in enumerate(buffered_data_list):
                         print(f"[Orchestrator] 🔄 กำลังส่งข้อมูลค้างส่ง (DTN Recovery) {idx+1}/{len(buffered_data_list)}...")
                         router.attach_header_and_send(b_data, session_id)
@@ -74,6 +80,7 @@ def run_edge_node():
             
     except KeyboardInterrupt:
         print("\n[System] 🛑 กำลังปิดระบบ Edge Node...")
+        evaluator.print_summary_report()
         router.close_connection()
         dtn_buffer.close()
         print("[System] ปิดระบบอย่างปลอดภัย")
